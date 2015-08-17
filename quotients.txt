@@ -1,0 +1,353 @@
+# Notes on fundamental domains in GAP
+
+
+
+
+# ----------------
+
+# The following functions handle Galois maps, 
+# P,R are the functions, F the function field, f  the field of constants,
+# g the Galois automorphism.
+
+FrobPolynomial := function(P,F,f,g) 
+	local s, Q, L, i;
+	s := IndeterminatesOfFunctionField(F)[1];
+	L := CoefficientsOfUnivariatePolynomial(P);
+	Q := 0*s;
+	if Length(L) = 0 then
+		return Q;
+	else
+		for i in [1..Length(L)] do
+			Q:= Q + L[i]^g * s^(i-1);	
+		od;
+		return Q;
+	fi;
+end;
+
+FrobRational := function(R,F,f,n)
+	return FrobPolynomial(NumeratorOfRationalFunction(R),F,f,n) / 	
+		FrobPolynomial(DenominatorOfRationalFunction(R),F,f,n); 	
+end;
+
+v_inf:= function(f)
+  if IsZero(f) then return infinity; fi;
+  return Degree(DenominatorOfRationalFunction(f)) - Degree(NumeratorOfRationalFunction(f));
+end;
+
+v_p := function(f,p)
+  local d,n,tmp;
+  if IsZero(f) then return infinity; fi;
+  d := DenominatorOfRationalFunction(f);
+  n := NumeratorOfRationalFunction(f);
+  tmp := function(x)
+    local m;
+    m := 0;
+    while true do
+      x := QuotRemLaurpols( x, p, 4 );
+      if x = fail then return m; fi;
+      m := m + 1;
+    od;
+  end;
+  return tmp(NumeratorOfRationalFunction(f)) - tmp(DenominatorOfRationalFunction(f));
+end;
+
+FrobLattice := function(M,F,f,g)
+	return [[FrobRational(M[1][1],F,f,g), FrobRational(M[1][2],F,f,g)],
+		[FrobRational(M[2][1],F,f,g), FrobRational(M[2][2],F,f,g)]];
+end;
+
+
+OrbitPlace := function(p,F,f,g)
+	local i, L;
+	L := [];
+	for i in [0..Order(g)-1] do
+		Add(L,FrobPolynomial(p,F,f,g^i));
+	od;
+	return L;
+end;
+
+OrbitLattice := function(p,F,f,g)
+	local i, L;
+	L := [];
+	for i in [0..Order(g)-1] do
+		Add(L,FrobLattice(p,F,f,g^i));
+	od;
+	return L;
+end;
+
+# --------------------------
+# The following handles Lattices in one tree.
+
+# Lattices will be denote by two rows in a 2x2 matrix, matrices act on it from the right
+
+# The following function gives a list of neighbours of a lattice.
+# M is a lattice, p a place, f is the field of constants
+
+ListNeighborsLattice := function(M,p,f)	
+	local L,i;
+	L := [];
+	Add(L, [p*M[1], ShallowCopy(M[2])]);
+	for i in f do 
+		if i=0 then continue; 
+		else
+			Add(L, [M[1] + i*M[2], p*M[2]]);	
+		fi;
+	od; 
+	return L;
+end;
+
+# The following function measures the distance between two lattice M and N for a place p.
+	
+DistanceLattices := function(M,N,p)
+	local K,tmp;
+	K := M * Inverse(N);
+	tmp := Minimum(v_p(K[1][1], p), v_p(K[1][2], p), v_p(K[2][1], p), v_p(K[2][2], p));
+	return AbsoluteValue(2*tmp - v_p(Determinant(K),p)); 
+end;
+
+
+# The following function tests if two lattices are equal
+
+LatticeEqual := function(M,N,p)  # M and N denote two lattices, p a place.
+	if DistanceLattices(M,N,p) = 0 then 
+		return true;
+	else
+		return false;
+	fi;
+end;
+
+StandardLattice := function(m,p)
+	return [[p^m,0*p],[0*p,p^0]];
+end;
+
+# This finds the projection of a vertex on the standard apartment for a lattice M and place p
+# the projection is of the form [[t^m,0],[0,1]], the function returns m 
+
+FindProjection := function(M,p)
+	local tmp,dst,dr;
+	tmp := 0;
+	dst := DistanceLattices(M,StandardLattice(0,p),p);
+	dr := (DistanceLattices(M,StandardLattice(-1,p),p) - 
+		DistanceLattices(M,StandardLattice(1,p),p))/2;
+	if dr = 0 then return 0; 
+	else
+		repeat
+			tmp := tmp + dr;
+			dst := dst - 1;
+		until dst < DistanceLattices(M,StandardLattice(tmp + dr,p),p);
+	fi;
+	return tmp;
+end;	 
+	
+ReflectionMap := function(M,p)
+	local prj, G;
+	prj := FindProjection(M,p);
+	if prj < 0 then
+		G := [[0*p,p^0], [p^0,0*p]];
+	else
+		G := [[p^0,0*p],[0*p,p^0]];
+	fi;
+	return G;
+end;
+
+# Find the projection of M on the StandardLattice(j,p), by means of an finite field 
+# element corresponding with a group automorphism.
+
+FindStandardProjectionMap := function(M,j,p)
+	local tmp,N,d,e,v;
+	tmp := Minimum(v_p(M[1][1]*p^-j, p), v_p(M[1][2], p), v_p(M[2][1]*p^-j, p), v_p(M[2][2], p));
+	N := M*p^-tmp;
+	v:= - Value(p,0);
+	d := Value(N[1][1]/p^j,v);
+	if d = 0 then 
+		return Value(N[2][2],v) / Value(N[2][1]/p^j,v);
+	else
+		return Value(N[1][2],v) / d;
+	fi;	
+end;
+
+
+PartialRetractionMap := function(M,p,f)
+	local prj, l, i, K, G, H, N, M2;
+	K := ReflectionMap(M,p);
+	M2 := M*K;
+	prj := FindProjection(M2,p);
+	if  DistanceLattices(M2,StandardLattice(prj,p),p) = 0 then
+		return K;
+	fi;
+	i := - FindStandardProjectionMap(M2,prj,p);
+	H:= [[p^0, i*p^-(prj)],[0*p,p^0]];
+	return K*H;
+end;
+
+
+# OLD CODE SNIPPET
+#	for i in f do
+#		G := [[p^0, i*p^-(prj)],[0*p,p^0]];
+#		if DistanceLattices(M2*G,N,p) < l then 
+#			H := G;
+#			break;
+#		fi;
+#	od;
+
+# Old code 0:37 -> 0:41  ; New Code 0:38->0:40
+
+
+RetractionMap := function(M,p,f)
+	local prj,G,H,N;
+	G := [[p^0,0*p],[0*p,p^0]];
+	prj:= FindProjection(M,p);
+	N := M;
+	while prj < 0 or (LatticeEqual(N,StandardLattice(prj,p),p) = false) do
+		H := PartialRetractionMap(N,p,f);
+		G := G*H;
+		N := N*H;
+		prj:= FindProjection(N,p);
+	od;
+	return G;
+end;		
+
+
+	
+Codistance := function(M,p,f)
+	return FindProjection(M*RetractionMap(M,p,f),p);
+end;
+	 
+# ------------------------------------
+# From now on we are going to use multiple lattices.
+
+# This maps the lattice M for p1 to the base lattice, with a map allowing poles in p1 and p2.
+
+	
+BaseMap := function(M,p1,p2,f) 
+	local G,N, prj;
+	G := RetractionMap(M,p1,f);
+	N := M*G;
+	prj:= FindProjection(N,p1);
+	G := G * [[(p2*p1^-1)^prj,0*p1],[0*p1,p1^0]]; 
+	return G;
+end;
+
+# Codistances of tuples, OM is an orbit of lattices, Op is the corresponding orbit of places
+
+CodistanceTuple := function(OM,Op,f)
+	local l,G,i;
+	l := Length(Op);
+	if l = 1 then
+		return Codistance(OM[1],Op[1]);
+	else
+		G := [[Op[1]^0,0*Op[1]],[0*Op[1],Op[1]^0]];
+		for i in [1..l-1] do
+			G := G*BaseMap(OM[i]*G,Op[i],Op[i+1],f);
+		od;
+		return Codistance(OM[l]*G,Op[l],f);
+	fi;
+end;
+
+# Lists the number of codistances of the orbits of a neighbor of a give lattice M for a 
+# place p under a Galois map g.  
+
+NeighborSpectrum := function(M,p,F,f,g)
+	local N,L;
+	L := ListNeighborsLattice(M,p,f);
+	for N in L do
+		Print(CodistanceTuple(OrbitLattice(N,F,f,g), OrbitPlace(p,F,f,g),f), " ");
+	od;
+end;
+
+
+
+
+NeighborMatrix := function(p,F,f,g)
+	local i,j,M,K,Op,d,IM,L,N,tmp;
+	M := StandardLattice(0,p);
+	Op := OrbitPlace(p,F,f,g);
+	d := Length(Op);
+	IM := [];
+	K:=NullMat(1,d)[1];
+	K[1] := M;
+	for i in [1..d] do;
+		Add(IM, NullMat(1,d)[1]);
+		L := ListNeighborsLattice(K[i],p,f);
+		for N in L do
+			tmp := CodistanceTuple(OrbitLattice(N,F,f,g), OrbitPlace(p,F,f,g),f);
+			if tmp < d then
+				IM[i][tmp+1] := IM[i][tmp+1] + 1;
+				Print(i," ", IM[i],"\n");
+				if tmp < d and K[tmp+1]=0 then
+					K[tmp+1]:= N;
+				fi;
+			fi;	
+		od;
+	od;	
+	return(IM);
+end;
+
+
+NeighborMatrixEven := function(p,F,f,g)
+	local i,j,M,K,Op,d,IM,L,N,tmp;
+	M := StandardLattice(0,p);
+	Op := OrbitPlace(p,F,f,g);
+	d := Length(Op);
+	IM := [];
+	K:=NullMat(1,d/2)[1];
+	K[1] := M;
+	for i in [1..d/2] do;
+		Add(IM, NullMat(1,d/2)[1]);
+		L := ListNeighborsLattice(K[i],p,f);
+		for N in L do
+			tmp := CodistanceTuple(OrbitLattice(N,F,f,g), OrbitPlace(p,F,f,g),f);
+			if tmp < d then
+				IM[i][tmp/2+1] := IM[i][tmp/2+1] + 1;
+				Print(i," ", IM[i],"\n");
+				if tmp < d and K[tmp/2+1]=0 then
+					K[tmp/2+1]:= N;
+				fi;
+			fi;	
+		od;
+	od;	
+	return(IM);
+end;
+
+
+FundamentalDomain := function(order,dgr)
+	local sdgr,f,F,t,p,g,M,i;
+	sdgr := order^dgr;
+	f:= GF(sdgr);
+	F:=FunctionField(f, ["t"]);
+	t:=IndeterminatesOfFunctionField(F)[1];
+	p:=t-Z(sdgr);
+	g:= FrobeniusAutomorphism(f);
+	M:= NeighborMatrix(p,F,f,g);
+	M[1] := M[1] / (order*(order^2-1));
+	for i in [2..Length(M)] do
+		M[i] := M[i] / order^i;
+	od;
+	return(M);
+end;
+
+FundamentalDomainEven := function(order,dgr)
+	local sdgr,f,F,t,p,g,M,i;
+	sdgr := order^dgr;
+	f:= GF(sdgr);
+	F:=FunctionField(f, ["t"]);
+	t:=IndeterminatesOfFunctionField(F)[1];
+	p:=t-Z(sdgr);
+	g:= FrobeniusAutomorphism(f);
+	M:= NeighborMatrixEven(p,F,f,g);
+	#M[1] := M[1] / (order*(order^2-1));
+	for i in [2..Length(M)] do
+		M[i] := M[i] / order^(2*i-1);
+	od;
+	return(M);
+end;
+
+
+# TESTING STUFF
+
+
+
+
+
+
+
